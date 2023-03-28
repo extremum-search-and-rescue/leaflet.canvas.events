@@ -1,4 +1,4 @@
-﻿interface MouseEvent {
+interface MouseEvent {
 	_stopped?: boolean;
 }
 
@@ -38,7 +38,7 @@ namespace L {
 
 		override enable () : this {
 			if (this._options.events.click === true) {
-				this._map.on('click', this._handleClick, this);
+				this._map.on('click contextmenu dblclick', this._handleClick, this);
 			}
 			if (this._options.events.mousemove === true) {
 				this._map.on('mousemove', this._throttle(this._handleMouseMove, this._options.throttleMs, this._options.throttleOptions), this);
@@ -47,17 +47,27 @@ namespace L {
 		}
 
 		override disable () : this {
-			L.DomEvent.off(this._map.getContainer(), 'click', this._handleClick, this);
-			L.DomEvent.off(this._map.getContainer(), 'mousemove', this._throttle(this._handleMouseMove, this._options.throttleMs, this._options.throttleOptions), this);
+			this._map.off('click contextmenu dblclick', this._handleClick, this);
+            this._map.off('mousemove', this._throttle(this._handleMouseMove, this._options.throttleMs, this._options.throttleOptions), this);
 			return this;
 		}
+		_isElementInsideControl(element: HTMLElement) :boolean {
+			if (element.classList.value.indexOf('leaflet-bar') >= 0
+                || element.classList.value.indexOf('leaflet-control-container') >= 0
+                || element.classList.value.indexOf('leaflet-control') >= 0)
+				return true;
+
+            if (element.parentElement != null)
+                return this._isElementInsideControl(element.parentElement);
+			return false;
+        }
 
 		/**
 		 * Handle `mousemove` event from map, i.e. forwards unhandled events
 		 * @param event
 		 * @private
 		 */
-		_handleMouseMove(event) {
+		_handleMouseMove(event: L.LeafletMouseEvent) {
 
 			// we use the maps mousemove event to avoid registering listeners
 			// for each individual layer, however this means we don't receive
@@ -70,6 +80,12 @@ namespace L {
 			var stopped;
 			var removed;
 
+			//we shound't add any magic when user is clicking leaflet controls
+			//only forward clicks on true map surface
+			if (currentTarget && currentTarget instanceof HTMLElement && this._isElementInsideControl(currentTarget)){
+                return;
+			}
+				
 			// hide the target node
 			removed = { node: currentTarget, pointerEvents: currentTarget.style.pointerEvents };
 			currentTarget.style.pointerEvents = 'none';
@@ -83,7 +99,7 @@ namespace L {
 				this._prevTarget.dispatchEvent(new MouseEvent('mouseout', event.originalEvent));
 				this._prevTarget.dispatchEvent(new MouseEvent('mouseleave', event.originalEvent));
 				if (this._map) {
-					L.DomUtil.removeClass(this._map.getPane('overlayPane'), 'leaflet-interactive');
+					L.DomUtil.removeClass(this._map.getContainer(), 'leaflet-interactive');
 				}
 			}
 			this._prevTarget = nextTarget;
@@ -97,7 +113,7 @@ namespace L {
 			) {
 				if (nextTarget.classList.value.indexOf('gis-clickable') >= 0 || nextTarget.classList.value.indexOf('gis-tooltip') >= 0) {
 					if (this._map) {
-						L.DomUtil.addClass(this._map.getPane('overlayPane'), 'leaflet-interactive');
+						L.DomUtil.addClass(this._map.getContainer(), 'leaflet-interactive');
 						if (nextTarget.children.length > 0 && nextTarget.children[0].textContent) {
 							this._map.fire('gis:tooltip', {
 								message: nextTarget.children[0].textContent,
@@ -127,7 +143,7 @@ namespace L {
 		 * @param event
 		 * @private
 		 */
-		_handleClick (event) {
+		_handleClick (event: L.LeafletMouseEvent) {
 
 			if (event.originalEvent._stopped) { return; }
 
@@ -152,11 +168,12 @@ namespace L {
 			) {
 				let ev;
 				if (event.originalEvent instanceof MouseEvent && event.originalEvent._simulated) {
-					ev = new MouseEvent(event.originalEvent.type, event.originalEvent);
-					ev.originalEvent._simulated = true;
+					ev = new MouseEvent(event.originalEvent.type, event.originalEvent) as MouseEvent & { originalEvent: Partial<MouseEvent> & {_simulated: boolean}};
+					ev.originalEvent = event.originalEvent && {_simulated: true};
 				}
 				else {
-					ev = new PointerEvent(event.originalEvent.type, event.originalEvent);
+					ev = new PointerEvent(event.originalEvent.type, event.originalEvent) as PointerEvent & { originalEvent: Partial<PointerEvent> & { _simulated: boolean } };;
+                    ev.originalEvent = event.originalEvent && { _simulated: true };
 				};
 				stopped = !nextTarget.dispatchEvent(ev);
 				if (stopped || ev._stopped) {
@@ -176,9 +193,9 @@ namespace L {
 		 * @returns {Function}
 		 * @private
 		 */
-		_throttle (func, wait, options) {
-			var context, args, result;
-			var timeout = null;
+		_throttle(func: Function, wait: number, options: {trailing: boolean, leading: boolean}) {
+			var context: any, args: any, result: any;
+			var timeout: number | null = null;
 			var previous = 0;
 			if (!options) options = {};
 			var later = function () {
@@ -209,8 +226,8 @@ namespace L {
 		}
 	}
 
-	export function eventForwarder (options) {
-		return new L.EventForwarder(options);
+	export function eventForwarder (map: L.Map) {
+		return new L.EventForwarder(map);
 	}
-	L.Map.addInitHook("addHandler", "canvasEvents", L.EventForwarder);
+	L.Map.addInitHook("addHandler", "canvasEvents", L.eventForwarder);
 }
